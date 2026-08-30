@@ -23,7 +23,7 @@ Every "agentic payments" startup is racing to insert themselves as middleware an
 ## Install
 
 ```bash
-pip install agentgate
+pip install pyagentgate
 ```
 
 ## Quick Start
