@@ -834,3 +834,11 @@ def test_loaded_policy_categories_case_insensitive():
     gate = Gate(policy=policy)
     assert gate.evaluate(make_tx(category="software")).decision == Decision.ALLOW
     assert gate.evaluate(make_tx(category="gambling")).decision == Decision.DENY
+
+
+def test_load_policy_long_single_line_yaml_string():
+    from agentgate.loader import load_policy
+
+    long_name = "x" * 5000
+    policy = load_policy(f"name: {long_name}")
+    assert policy.name == long_name

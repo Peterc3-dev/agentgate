@@ -56,8 +56,13 @@ def _looks_like_path(source: str) -> bool:
     """Decide whether a string names a file rather than containing YAML."""
     if "\n" in source or source.strip().startswith("{"):
         return False
-    if Path(source).is_file():
-        return True
+    try:
+        if Path(source).is_file():
+            return True
+    except (OSError, ValueError):
+        # Too long for a file name (ENAMETOOLONG), embedded NUL, etc.:
+        # it cannot be a path, so treat it as YAML.
+        return False
     # A single-line YAML document such as "name: ops.yaml" also ends in .yaml;
     # only treat it as a path when it has no "key: value" separator.
     return Path(source).suffix.lower() in (".yaml", ".yml") and ": " not in source
