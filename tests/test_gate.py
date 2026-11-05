@@ -497,3 +497,28 @@ def _epoch():
     from datetime import datetime, timezone
 
     return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+# --- Policy loading: path vs YAML string ---
+
+
+def test_load_policy_single_line_yaml_ending_in_yaml_suffix():
+    from agentgate.loader import load_policy
+
+    assert load_policy("name: ops.yaml").name == "ops.yaml"
+
+
+def test_load_policy_uppercase_suffix_and_extensionless_path(tmp_path):
+    from agentgate.loader import load_policy
+
+    for fname in ("POLICY.YAML", "policy"):
+        f = tmp_path / fname
+        f.write_text("name: from-file\nlimits:\n  daily: 200\n")
+        assert load_policy(str(f)).limits.daily == 200
+
+
+def test_load_policy_non_mapping_raises_value_error():
+    from agentgate.loader import load_policy
+
+    with pytest.raises(ValueError):
+        load_policy("just a string")

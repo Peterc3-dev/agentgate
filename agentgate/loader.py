@@ -34,9 +34,7 @@ def load_policy(source: str | Path | dict) -> Policy:
     if isinstance(source, dict):
         data = source
     elif isinstance(source, Path) or (
-        isinstance(source, str) and not source.strip().startswith("{")
-        and "\n" not in source
-        and Path(source).suffix in (".yaml", ".yml")
+        isinstance(source, str) and _looks_like_path(source)
     ):
         if not HAS_YAML:
             raise ImportError("PyYAML required: pip install pyyaml")
@@ -47,7 +45,22 @@ def load_policy(source: str | Path | dict) -> Policy:
             raise ImportError("PyYAML required: pip install pyyaml")
         data = yaml.safe_load(source)
 
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Policy source must contain a mapping, got {type(data).__name__}"
+        )
     return _dict_to_policy(data)
+
+
+def _looks_like_path(source: str) -> bool:
+    """Decide whether a string names a file rather than containing YAML."""
+    if "\n" in source or source.strip().startswith("{"):
+        return False
+    if Path(source).is_file():
+        return True
+    # A single-line YAML document such as "name: ops.yaml" also ends in .yaml;
+    # only treat it as a path when it has no "key: value" separator.
+    return Path(source).suffix.lower() in (".yaml", ".yml") and ": " not in source
 
 
 def _dict_to_policy(data: dict[str, Any]) -> Policy:
