@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import math
 from typing import Any, Callable
 
 from .gate import Gate
@@ -25,6 +26,14 @@ class GatedTransactionEscalated(Exception):
     def __init__(self, result):
         self.result = result
         super().__init__(f"Transaction requires escalation: {', '.join(result.escalation_reasons)}")
+
+
+def _coerce_amount(amount: Any) -> float:
+    """Convert a call argument to a float amount, rejecting NaN/inf."""
+    value = float(amount)
+    if not math.isfinite(value):
+        raise ValueError("Transaction amount must be a finite number")
+    return value
 
 
 def gated(
@@ -73,7 +82,7 @@ def gated(
                 reasoning = bound.arguments.get(reasoning_param, "")
 
             tx = Transaction(
-                amount=float(amount),
+                amount=_coerce_amount(amount),
                 currency="USD",
                 merchant=str(merchant),
                 category=str(category),
@@ -105,7 +114,7 @@ def gated(
                 reasoning = bound.arguments.get(reasoning_param, "")
 
             tx = Transaction(
-                amount=float(amount),
+                amount=_coerce_amount(amount),
                 currency="USD",
                 merchant=str(merchant),
                 category=str(category),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -40,6 +41,8 @@ class Transaction:
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
+        if not math.isfinite(self.amount):
+            raise ValueError("Transaction amount must be a finite number")
         if self.amount < 0:
             raise ValueError("Transaction amount cannot be negative")
         if not self.currency:

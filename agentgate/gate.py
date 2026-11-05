@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
@@ -65,61 +66,65 @@ class Gate:
         self.escalation_handler = escalation_handler
         self._checks = checks or ALL_CHECKS
         self._audit_log: list[AuditEntry] = audit_log if audit_log is not None else []
+        # Serialises check-and-record so concurrent evaluations for the same
+        # agent cannot both pass a cumulative limit (e.g. daily) and both record.
+        self._lock = threading.RLock()
 
     def evaluate(self, tx: Transaction) -> EvaluationResult:
         """Evaluate a transaction against the policy. Synchronous."""
-        results: list[Check] = []
-        escalation_reasons: list[str] = []
+        with self._lock:
+            results: list[Check] = []
+            escalation_reasons: list[str] = []
 
-        for check_fn in self._checks:
-            check = check_fn(tx=tx, policy=self.policy, ledger=self.ledger)
-            results.append(check)
+            for check_fn in self._checks:
+                check = check_fn(tx=tx, policy=self.policy, ledger=self.ledger)
+                results.append(check)
 
-        # Separate hard failures from escalation
-        hard_fails = [
-            c for c in results
-            if c.result == CheckResult.FAIL and c.name != "escalation"
-        ]
-        escalation_check = next(
-            (c for c in results if c.name == "escalation"), None
-        )
+            # Separate hard failures from escalation
+            hard_fails = [
+                c for c in results
+                if c.result == CheckResult.FAIL and c.name != "escalation"
+            ]
+            escalation_check = next(
+                (c for c in results if c.name == "escalation"), None
+            )
 
-        # Determine decision
-        if hard_fails:
-            decision = Decision.DENY
-        elif escalation_check and escalation_check.result == CheckResult.FAIL:
-            decision = Decision.ESCALATE
-            escalation_reasons = escalation_check.details.get("reasons", [])
-        else:
-            decision = Decision.ALLOW
+            # Determine decision
+            if hard_fails:
+                decision = Decision.DENY
+            elif escalation_check and escalation_check.result == CheckResult.FAIL:
+                decision = Decision.ESCALATE
+                escalation_reasons = escalation_check.details.get("reasons", [])
+            else:
+                decision = Decision.ALLOW
 
-        # Build audit entry
-        audit = AuditEntry(
-            timestamp=datetime.now(timezone.utc),
-            transaction_id=tx.id,
-            agent_id=tx.agent_id,
-            decision=decision,
-            checks_passed=[c.name for c in results if c.result == CheckResult.PASS],
-            checks_failed=[c.name for c in results if c.result == CheckResult.FAIL],
-            escalation_reasons=escalation_reasons,
-            reasoning=tx.reasoning,
-            policy_name=self.policy.name,
-            policy_version=self.policy.version,
-        )
-        self._audit_log.append(audit)
+            # Build audit entry
+            audit = AuditEntry(
+                timestamp=datetime.now(timezone.utc),
+                transaction_id=tx.id,
+                agent_id=tx.agent_id,
+                decision=decision,
+                checks_passed=[c.name for c in results if c.result == CheckResult.PASS],
+                checks_failed=[c.name for c in results if c.result == CheckResult.FAIL],
+                escalation_reasons=escalation_reasons,
+                reasoning=tx.reasoning,
+                policy_name=self.policy.name,
+                policy_version=self.policy.version,
+            )
+            self._audit_log.append(audit)
 
-        # Record in ledger if allowed
-        if decision == Decision.ALLOW:
-            self.ledger.record(tx.agent_id, tx)
+            # Record in ledger if allowed
+            if decision == Decision.ALLOW:
+                self.ledger.record(tx.agent_id, tx)
 
-        result = EvaluationResult(
-            decision=decision,
-            transaction=tx,
-            checks=results,
-            escalation_reasons=escalation_reasons,
-            audit=audit,
-        )
-        return result
+            result = EvaluationResult(
+                decision=decision,
+                transaction=tx,
+                checks=results,
+                escalation_reasons=escalation_reasons,
+                audit=audit,
+            )
+            return result
 
     @property
     def audit_log(self) -> list[AuditEntry]:

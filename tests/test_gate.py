@@ -307,3 +307,78 @@ def test_reset_clears_state():
     # After reset, daily total should be 0
     r = gate.evaluate(make_tx(amount=60.0))
     assert r.decision == Decision.ALLOW
+
+
+# --- Non-finite amounts ---
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_amount_raises(bad):
+    with pytest.raises(ValueError):
+        Transaction(amount=bad, currency="USD", merchant="x", category="y", agent_id="z")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), "nan", "inf"])
+def test_gated_decorator_rejects_non_finite_amount(bad):
+    policy = Policy(limits=PolicyLimits(per_transaction=10.0, daily=20.0))
+    gate = Gate(policy=policy)
+
+    @gated(gate=gate)
+    def buy(merchant, amount, category="general"):
+        return "should not reach here"
+
+    with pytest.raises(ValueError):
+        buy(merchant="store.com", amount=bad)
+    # Nothing was evaluated or recorded
+    assert gate.audit_log == []
+
+
+# --- Concurrency ---
+
+
+def test_concurrent_evaluations_respect_daily_limit():
+    """N threads each submit an amount that alone fits max_daily but together
+    exceed it. Without serialising check-and-record, every thread can read a
+    stale daily total and all be ALLOWed."""
+    import threading
+    import time
+    from datetime import datetime, timezone
+
+    from agentgate.ledger import InMemoryLedger
+
+    class SlowLedger(InMemoryLedger):
+        # Widen the window between reading the daily total and recording.
+        def total_since(self, agent_id, since):
+            total = super().total_since(agent_id, since)
+            time.sleep(0.02)
+            return total
+
+    max_daily = 100.0
+    amount = 60.0  # fits alone; any two together exceed max_daily
+    n_threads = 8
+
+    policy = Policy.simple(max_per_transaction=max_daily, max_daily=max_daily)
+    ledger = SlowLedger()
+    gate = Gate(policy=policy, ledger=ledger)
+
+    barrier = threading.Barrier(n_threads)
+    results = []
+    results_lock = threading.Lock()
+
+    def worker():
+        barrier.wait()
+        r = gate.evaluate(make_tx(amount=amount))
+        with results_lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == n_threads
+    allowed = [r for r in results if r.decision == Decision.ALLOW]
+    assert len(allowed) == 1
+    start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    assert ledger.total_since("test-agent", start_of_day) <= max_daily

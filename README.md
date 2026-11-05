@@ -32,7 +32,7 @@ pip install pyagentgate
 from agentgate import Policy, Gate, Transaction
 
 # Define a policy
-policy = Policy(
+policy = Policy.simple(
     max_per_transaction=50.00,
     max_daily=200.00,
     max_monthly=2000.00,
