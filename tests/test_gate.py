@@ -522,3 +522,106 @@ def test_load_policy_non_mapping_raises_value_error():
 
     with pytest.raises(ValueError):
         load_policy("just a string")
+
+
+# --- Decorator reserves spend while the payment is in flight ---
+
+
+def test_concurrent_gated_calls_respect_daily_limit():
+    """N threads call a @gated payment whose amount alone fits max_daily but
+    any two together exceed it. check() runs under the lock but the payment
+    runs outside it, so without a reservation every thread could pass."""
+    import threading
+    import time
+
+    max_daily = 100.0
+    amount = 60.0
+    n_threads = 8
+
+    gate = Gate(policy=Policy.simple(max_per_transaction=max_daily, max_daily=max_daily))
+    barrier = threading.Barrier(n_threads)
+    paid = []
+    denied = []
+    lock = threading.Lock()
+
+    @gated(gate=gate)
+    def pay(merchant, amount, category="office_supplies"):
+        time.sleep(0.05)  # payment in flight, outside the gate's lock
+        with lock:
+            paid.append(amount)
+        return "ok"
+
+    def worker():
+        barrier.wait()
+        try:
+            pay("staples.com", amount)
+        except GatedTransactionDenied:
+            with lock:
+                denied.append(amount)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(paid) == 1
+    assert len(denied) == n_threads - 1
+    assert gate.ledger.total_since("default-agent", _epoch()) == amount
+
+
+def test_gated_payment_exception_releases_reservation():
+    import threading
+
+    gate = Gate(policy=Policy(limits=PolicyLimits(daily=100.0)))
+    in_flight = threading.Event()
+    proceed = threading.Event()
+
+    @gated(gate=gate)
+    def pay(merchant, amount, category="office_supplies"):
+        in_flight.set()
+        proceed.wait(5)
+        raise RuntimeError("card declined")
+
+    errors = []
+
+    def worker():
+        try:
+            pay("staples.com", 60.0)
+        except RuntimeError as e:
+            errors.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert in_flight.wait(5)
+    # While the payment is in flight the reservation counts toward the limit.
+    assert gate.ledger.total_since("default-agent", _epoch()) == 60.0
+    with pytest.raises(GatedTransactionDenied):
+        pay("staples.com", 60.0)
+    proceed.set()
+    t.join()
+
+    assert len(errors) == 1
+    assert gate.ledger.total_since("default-agent", _epoch()) == 0
+    assert "staples.com" not in gate.ledger.get_known_merchants("default-agent")
+
+
+def test_gate_check_reserves_and_release_or_commit_settles():
+    gate = Gate(policy=Policy(limits=PolicyLimits(daily=100.0)))
+    tx1 = make_tx(amount=60.0)
+    tx2 = make_tx(amount=60.0)
+
+    assert gate.check(tx1).decision == Decision.ALLOW
+    # tx1 is reserved, so tx2 would exceed the daily limit.
+    assert gate.check(tx2).decision == Decision.DENY
+    gate.release(tx1)
+    assert gate.ledger.total_since("test-agent", _epoch()) == 0
+
+    assert gate.check(tx2).decision == Decision.ALLOW
+    gate.commit(tx2)
+    assert gate.ledger.total_since("test-agent", _epoch()) == 60.0
+    assert "staples.com" in gate.ledger.get_known_merchants("test-agent")
+    # Releasing a committed transaction is a no-op.
+    gate.release(tx2)
+    assert gate.ledger.total_since("test-agent", _epoch()) == 60.0
+    assert gate.check(make_tx(amount=60.0)).decision == Decision.DENY

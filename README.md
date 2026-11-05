@@ -116,6 +116,12 @@ When a transaction needs escalation, `evaluate()` returns `Decision.ESCALATE` wi
 transaction. This stops two concurrent calls for the same agent from both passing a
 cumulative limit, such as the daily cap.
 
+`Gate.check()` runs the same checks and, if the transaction is allowed, reserves it in
+the ledger under that lock. Reservations count toward cumulative limits and velocity
+while the payment is in flight. Call `Gate.commit(tx)` when the payment succeeds, or
+`Gate.release(tx)` when it fails. The `@gated` decorator does this for you: it calls
+`check()`, runs the wrapped function, and then commits, or releases if the function raises.
+
 The lock belongs to each `Gate` instance. It does not cover other `Gate` objects. If two
 gates share one ledger, their evaluations are not serialised against each other. Use a
 single `Gate` per ledger if you need limits enforced across threads.

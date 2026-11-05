@@ -73,22 +73,40 @@ class Gate:
 
     def evaluate(self, tx: Transaction) -> EvaluationResult:
         """Evaluate a transaction and, if allowed, record it in the ledger."""
-        return self._evaluate(tx, record=True)
+        return self._evaluate(tx, mode="record")
 
     def check(self, tx: Transaction) -> EvaluationResult:
-        """Evaluate a transaction without recording it.
+        """Evaluate a transaction and, if allowed, reserve it in the ledger.
 
-        Pair with commit() once the payment has actually gone through.
+        The reservation is made under the same lock as the checks and counts
+        toward cumulative limits and velocity, so two concurrent check() calls
+        cannot both pass a limit that only one of them fits. Once the payment
+        has gone through, call commit(tx); if it fails, call release(tx).
         """
-        return self._evaluate(tx, record=False)
+        return self._evaluate(tx, mode="reserve")
 
     def commit(self, tx: Transaction) -> None:
-        """Record a completed transaction in the ledger, stamped with now."""
-        with self._lock:
-            recorded = dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
-            self.ledger.record(tx.agent_id, recorded)
+        """Record a completed transaction.
 
-    def _evaluate(self, tx: Transaction, record: bool) -> EvaluationResult:
+        Confirms the reservation made by check(). A transaction with no
+        reservation is recorded directly, stamped with now.
+        """
+        with self._lock:
+            if not self.ledger.confirm(tx.agent_id, tx.id):
+                self.ledger.record(tx.agent_id, self._stamped(tx))
+
+    def release(self, tx: Transaction) -> None:
+        """Drop the reservation made by check() for a payment that failed."""
+        with self._lock:
+            self.ledger.release(tx.agent_id, tx.id)
+
+    @staticmethod
+    def _stamped(tx: Transaction) -> Transaction:
+        # Stamp the recorded time ourselves: a caller-supplied timestamp
+        # could be backdated to fall outside every window.
+        return dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
+
+    def _evaluate(self, tx: Transaction, mode: str) -> EvaluationResult:
         with self._lock:
             results: list[Check] = []
             escalation_reasons: list[str] = []
@@ -130,11 +148,12 @@ class Gate:
             )
             self._audit_log.append(audit)
 
-            # Record in ledger if allowed
-            # commit() stamps the recorded time itself: a caller-supplied
-            # timestamp could be backdated to fall outside every window.
-            if record and decision == Decision.ALLOW:
-                self.commit(tx)
+            # Record (or reserve) in ledger if allowed
+            if decision == Decision.ALLOW:
+                if mode == "record":
+                    self.ledger.record(tx.agent_id, self._stamped(tx))
+                elif mode == "reserve":
+                    self.ledger.reserve(tx.agent_id, self._stamped(tx))
 
             result = EvaluationResult(
                 decision=decision,

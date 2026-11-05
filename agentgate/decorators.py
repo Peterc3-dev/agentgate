@@ -97,7 +97,11 @@ def gated(
             elif result.decision == Decision.ESCALATE:
                 raise GatedTransactionEscalated(result)
 
-            value = func(*args, **kwargs)
+            try:
+                value = func(*args, **kwargs)
+            except BaseException:
+                _gate.release(tx)
+                raise
             _gate.commit(tx)
             return value
 
@@ -131,7 +135,11 @@ def gated(
             elif result.decision == Decision.ESCALATE:
                 raise GatedTransactionEscalated(result)
 
-            value = await func(*args, **kwargs)
+            try:
+                value = await func(*args, **kwargs)
+            except BaseException:
+                _gate.release(tx)
+                raise
             _gate.commit(tx)
             return value
 
