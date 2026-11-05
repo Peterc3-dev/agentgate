@@ -72,7 +72,23 @@ class Gate:
         self._lock = threading.RLock()
 
     def evaluate(self, tx: Transaction) -> EvaluationResult:
-        """Evaluate a transaction against the policy. Synchronous."""
+        """Evaluate a transaction and, if allowed, record it in the ledger."""
+        return self._evaluate(tx, record=True)
+
+    def check(self, tx: Transaction) -> EvaluationResult:
+        """Evaluate a transaction without recording it.
+
+        Pair with commit() once the payment has actually gone through.
+        """
+        return self._evaluate(tx, record=False)
+
+    def commit(self, tx: Transaction) -> None:
+        """Record a completed transaction in the ledger, stamped with now."""
+        with self._lock:
+            recorded = dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
+            self.ledger.record(tx.agent_id, recorded)
+
+    def _evaluate(self, tx: Transaction, record: bool) -> EvaluationResult:
         with self._lock:
             results: list[Check] = []
             escalation_reasons: list[str] = []
@@ -115,11 +131,10 @@ class Gate:
             self._audit_log.append(audit)
 
             # Record in ledger if allowed
-            if decision == Decision.ALLOW:
-                # Stamp the recorded time ourselves: a caller-supplied
-                # timestamp could be backdated to fall outside every window.
-                recorded = dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
-                self.ledger.record(tx.agent_id, recorded)
+            # commit() stamps the recorded time itself: a caller-supplied
+            # timestamp could be backdated to fall outside every window.
+            if record and decision == Decision.ALLOW:
+                self.commit(tx)
 
             result = EvaluationResult(
                 decision=decision,

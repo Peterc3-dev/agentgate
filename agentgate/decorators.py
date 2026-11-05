@@ -90,14 +90,16 @@ def gated(
                 reasoning=reasoning,
             )
 
-            result = _gate.evaluate(tx)
+            result = _gate.check(tx)
 
             if result.decision == Decision.DENY:
                 raise GatedTransactionDenied(result)
             elif result.decision == Decision.ESCALATE:
                 raise GatedTransactionEscalated(result)
 
-            return func(*args, **kwargs)
+            value = func(*args, **kwargs)
+            _gate.commit(tx)
+            return value
 
         # Async variant
         @functools.wraps(func)
@@ -122,14 +124,16 @@ def gated(
                 reasoning=reasoning,
             )
 
-            result = _gate.evaluate(tx)
+            result = _gate.check(tx)
 
             if result.decision == Decision.DENY:
                 raise GatedTransactionDenied(result)
             elif result.decision == Decision.ESCALATE:
                 raise GatedTransactionEscalated(result)
 
-            return await func(*args, **kwargs)
+            value = await func(*args, **kwargs)
+            _gate.commit(tx)
+            return value
 
         if inspect.iscoroutinefunction(func):
             return async_wrapper

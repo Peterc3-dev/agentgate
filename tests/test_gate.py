@@ -454,3 +454,46 @@ def test_allowed_hours_wrap_past_midnight(monkeypatch, hour, expected):
     _freeze_check_clock(monkeypatch, hour)
     policy = Policy(time_restrictions=TimeRestrictions(allowed_hours=(22, 6)))
     assert Gate(policy=policy).evaluate(make_tx()).decision == expected
+
+
+# --- Decorator records only completed payments ---
+
+
+def test_gated_does_not_record_when_payment_fails():
+    gate = Gate(policy=Policy(limits=PolicyLimits(daily=100.0)))
+
+    @gated(gate=gate)
+    def pay(merchant, amount, category="office_supplies"):
+        raise RuntimeError("card declined")
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            pay("staples.com", 60.0)
+    assert gate.ledger.total_since("default-agent", _epoch()) == 0
+
+    @gated(gate=gate)
+    def pay_ok(merchant, amount, category="office_supplies"):
+        return "ok"
+
+    assert pay_ok("staples.com", 60.0) == "ok"
+    assert gate.ledger.total_since("default-agent", _epoch()) == 60.0
+
+
+def test_gated_async_does_not_record_when_payment_fails():
+    import asyncio
+
+    gate = Gate(policy=Policy(limits=PolicyLimits(daily=100.0)))
+
+    @gated(gate=gate)
+    async def pay(merchant, amount, category="office_supplies"):
+        raise RuntimeError("card declined")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(pay("staples.com", 60.0))
+    assert gate.ledger.total_since("default-agent", _epoch()) == 0
+
+
+def _epoch():
+    from datetime import datetime, timezone
+
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
