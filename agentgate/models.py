@@ -49,6 +49,8 @@ class Transaction:
             raise ValueError("Currency is required")
         if not self.merchant:
             raise ValueError("Merchant is required")
+        if self.timestamp.tzinfo is None or self.timestamp.utcoffset() is None:
+            raise ValueError("Transaction timestamp must be timezone-aware")
 
 
 @dataclass

@@ -382,3 +382,31 @@ def test_concurrent_evaluations_respect_daily_limit():
     assert len(allowed) == 1
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     assert ledger.total_since("test-agent", start_of_day) <= max_daily
+
+
+# --- Recorded timestamps ---
+
+
+def test_backdated_timestamp_does_not_evade_daily_limit():
+    from datetime import datetime, timedelta, timezone
+
+    gate = Gate(policy=Policy(limits=PolicyLimits(daily=100.0)))
+    old = datetime.now(timezone.utc) - timedelta(days=40)
+    assert gate.evaluate(make_tx(amount=80.0, timestamp=old)).decision == Decision.ALLOW
+    assert gate.evaluate(make_tx(amount=80.0, timestamp=old)).decision == Decision.DENY
+
+
+def test_backdated_timestamp_does_not_evade_velocity():
+    from datetime import datetime, timedelta, timezone
+
+    gate = Gate(policy=Policy(velocity=VelocityRules(max_per_hour=1)))
+    old = datetime.now(timezone.utc) - timedelta(days=2)
+    assert gate.evaluate(make_tx(timestamp=old)).decision == Decision.ALLOW
+    assert gate.evaluate(make_tx(timestamp=old)).decision == Decision.DENY
+
+
+def test_naive_timestamp_rejected():
+    from datetime import datetime
+
+    with pytest.raises(ValueError):
+        make_tx(timestamp=datetime.now())

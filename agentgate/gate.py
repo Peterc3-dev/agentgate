@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -115,7 +116,10 @@ class Gate:
 
             # Record in ledger if allowed
             if decision == Decision.ALLOW:
-                self.ledger.record(tx.agent_id, tx)
+                # Stamp the recorded time ourselves: a caller-supplied
+                # timestamp could be backdated to fall outside every window.
+                recorded = dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
+                self.ledger.record(tx.agent_id, recorded)
 
             result = EvaluationResult(
                 decision=decision,
