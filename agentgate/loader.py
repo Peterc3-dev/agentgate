@@ -99,7 +99,8 @@ def _dict_to_policy(data: dict[str, Any]) -> Policy:
 
     time_data = data.get("time_restrictions", {})
     time_rules = TimeRestrictions(
-        allowed_hours=tuple(time_data["allowed_hours"]) if "allowed_hours" in time_data else None,
+        # TimeRestrictions validates the shape and range (two ints in 0..24).
+        allowed_hours=time_data.get("allowed_hours"),
         allowed_days=time_data.get("allowed_days"),
     )
 

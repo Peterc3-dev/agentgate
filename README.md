@@ -91,6 +91,15 @@ time_restrictions:
   allowed_days: [0, 1, 2, 3, 4]  # Mon-Fri
 ```
 
+### Validation
+
+Policy values are checked when a policy is built, whether from YAML or in Python.
+Spending limits, escalation amounts and `cooldown_seconds` must be finite numbers that
+are not negative. Velocity counts must be non-negative integers. `allowed_hours` must be
+two integers in 0..24, and `allowed_days` integers in 0..6. Quoted numbers such as
+`daily: "200"` are not converted: they raise `ValueError` naming the field, so write
+numbers without quotes.
+
 ## Custom Escalation Handlers
 
 ```python

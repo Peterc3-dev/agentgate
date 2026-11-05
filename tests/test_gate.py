@@ -753,3 +753,46 @@ def test_gated_async_uses_handler_approve_and_reject():
     with pytest.raises(GatedTransactionDenied):
         asyncio.run(pay2("staples.com", 150.0))
     assert reject_gate.ledger.total_since("test-agent", _epoch()) == 0
+
+
+# --- Policy value validation ---
+
+
+def test_load_policy_rejects_string_amount():
+    from agentgate import load_policy
+
+    with pytest.raises(ValueError, match="limits.daily must be a number"):
+        load_policy({"limits": {"daily": "200"}})
+
+
+def test_policy_rejects_negative_limit():
+    from agentgate import load_policy
+
+    with pytest.raises(ValueError, match="cannot be negative"):
+        PolicyLimits(per_transaction=-1.0)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        load_policy({"limits": {"monthly": -5}})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_policy_rejects_non_finite_limit(bad):
+    with pytest.raises(ValueError, match="finite"):
+        PolicyLimits(daily=bad)
+
+
+def test_allowed_hours_out_of_range_rejected():
+    from agentgate import load_policy
+
+    with pytest.raises(ValueError, match="0..24"):
+        TimeRestrictions(allowed_hours=(25, 3))
+    with pytest.raises(ValueError, match="0..24"):
+        load_policy({"time_restrictions": {"allowed_hours": [25, 3]}})
+    with pytest.raises(ValueError, match="two integers"):
+        load_policy({"time_restrictions": {"allowed_hours": [9]}})
+
+
+def test_load_policy_valid_allowed_hours_is_tuple():
+    from agentgate import load_policy
+
+    policy = load_policy({"time_restrictions": {"allowed_hours": [9, 17]}})
+    assert policy.time_restrictions.allowed_hours == (9, 17)

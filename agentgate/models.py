@@ -53,6 +53,36 @@ class Transaction:
             raise ValueError("Transaction timestamp must be timezone-aware")
 
 
+def _validate_amount(name: str, value: Any, allow_none: bool = True) -> None:
+    """Require a finite, non-negative real number (or None when allowed).
+
+    Strings, including numeric ones such as "200", are rejected rather than
+    coerced, so a quoted YAML value fails at load time instead of mid-check.
+    """
+    if value is None and allow_none:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"{name} must be a number, got {type(value).__name__} {value!r}"
+        )
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if value < 0:
+        raise ValueError(f"{name} cannot be negative, got {value!r}")
+
+
+def _validate_count(name: str, value: Any) -> None:
+    """Require a non-negative integer or None."""
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"{name} must be an integer, got {type(value).__name__} {value!r}"
+        )
+    if value < 0:
+        raise ValueError(f"{name} cannot be negative, got {value!r}")
+
+
 @dataclass
 class PolicyLimits:
     """Spending limits."""
@@ -62,6 +92,12 @@ class PolicyLimits:
     weekly: float | None = None
     monthly: float | None = None
     currency: str = "USD"
+
+    def __post_init__(self):
+        for name in ("per_transaction", "daily", "weekly", "monthly"):
+            _validate_amount(f"limits.{name}", getattr(self, name))
+        if not isinstance(self.currency, str) or not self.currency:
+            raise ValueError("limits.currency must be a non-empty string")
 
 
 @dataclass
@@ -82,6 +118,11 @@ class VelocityRules:
     max_per_day: int | None = None
     cooldown_seconds: float = 0
 
+    def __post_init__(self):
+        _validate_count("velocity.max_per_hour", self.max_per_hour)
+        _validate_count("velocity.max_per_day", self.max_per_day)
+        _validate_amount("velocity.cooldown_seconds", self.cooldown_seconds, allow_none=False)
+
 
 @dataclass
 class EscalationRules:
@@ -92,6 +133,10 @@ class EscalationRules:
     on_new_category: bool = False
     on_cumulative_above: float | None = None  # escalate when session total exceeds
 
+    def __post_init__(self):
+        _validate_amount("escalation.above_amount", self.above_amount)
+        _validate_amount("escalation.on_cumulative_above", self.on_cumulative_above)
+
 
 @dataclass
 class TimeRestrictions:
@@ -99,6 +144,31 @@ class TimeRestrictions:
 
     allowed_hours: tuple[int, int] | None = None  # (start, end) in 24h
     allowed_days: list[int] | None = None  # 0=Mon, 6=Sun
+
+    def __post_init__(self):
+        if self.allowed_hours is not None:
+            hours = self.allowed_hours
+            if isinstance(hours, (str, bytes)) or not isinstance(hours, (tuple, list)) or len(hours) != 2:
+                raise ValueError(
+                    f"time_restrictions.allowed_hours must be two integers [start, end], got {hours!r}"
+                )
+            for h in hours:
+                if isinstance(h, bool) or not isinstance(h, int) or not 0 <= h <= 24:
+                    raise ValueError(
+                        f"time_restrictions.allowed_hours values must be integers in 0..24, got {hours!r}"
+                    )
+            self.allowed_hours = (hours[0], hours[1])
+        if self.allowed_days is not None:
+            days = self.allowed_days
+            if isinstance(days, (str, bytes)) or not isinstance(days, (list, tuple)):
+                raise ValueError(
+                    f"time_restrictions.allowed_days must be a list of integers 0..6, got {days!r}"
+                )
+            for d in days:
+                if isinstance(d, bool) or not isinstance(d, int) or not 0 <= d <= 6:
+                    raise ValueError(
+                        f"time_restrictions.allowed_days values must be integers in 0..6, got {days!r}"
+                    )
 
 
 @dataclass
