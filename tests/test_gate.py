@@ -425,3 +425,32 @@ def test_currency_mismatch_denied():
 def test_currency_match_case_insensitive():
     gate = Gate(policy=Policy(limits=PolicyLimits(currency="usd")))
     assert gate.evaluate(make_tx(currency="USD")).decision == Decision.ALLOW
+
+
+# --- Overnight hours ---
+
+
+def _freeze_check_clock(monkeypatch, hour):
+    from datetime import datetime, timezone
+    import agentgate.checks as checks_mod
+
+    fixed = datetime(2026, 1, 5, hour, 30, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(checks_mod, "datetime", FrozenDatetime)
+
+
+@pytest.mark.parametrize("hour,expected", [
+    (23, Decision.ALLOW),
+    (2, Decision.ALLOW),
+    (6, Decision.DENY),
+    (12, Decision.DENY),
+])
+def test_allowed_hours_wrap_past_midnight(monkeypatch, hour, expected):
+    _freeze_check_clock(monkeypatch, hour)
+    policy = Policy(time_restrictions=TimeRestrictions(allowed_hours=(22, 6)))
+    assert Gate(policy=policy).evaluate(make_tx()).decision == expected

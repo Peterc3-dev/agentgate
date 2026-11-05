@@ -205,7 +205,11 @@ def check_time_restrictions(tx: Transaction, policy: Policy, **_) -> Check:
 
     if rules.allowed_hours is not None:
         start, end = rules.allowed_hours
-        if not (start <= now.hour < end):
+        if start <= end:
+            in_window = start <= now.hour < end
+        else:  # window wraps past midnight, e.g. (22, 6)
+            in_window = now.hour >= start or now.hour < end
+        if not in_window:
             return Check(
                 "time_restriction",
                 CheckResult.FAIL,
