@@ -842,3 +842,62 @@ def test_load_policy_long_single_line_yaml_string():
     long_name = "x" * 5000
     policy = load_policy(f"name: {long_name}")
     assert policy.name == long_name
+
+
+class _OldStyleLedger:
+    """A custom backend written before reservations existed."""
+
+    def __init__(self):
+        self.txs = []
+
+    def record(self, agent_id, transaction):
+        self.txs.append(transaction)
+
+    def get_transactions(self, agent_id, since):
+        return [t for t in self.txs if t.agent_id == agent_id and t.timestamp >= since]
+
+    def get_known_merchants(self, agent_id):
+        return {t.merchant for t in self.txs if t.agent_id == agent_id}
+
+    def get_known_categories(self, agent_id):
+        return {t.category for t in self.txs if t.agent_id == agent_id}
+
+    def total_since(self, agent_id, since):
+        return sum(t.amount for t in self.get_transactions(agent_id, since))
+
+    def count_since(self, agent_id, since):
+        return len(self.get_transactions(agent_id, since))
+
+    def last_transaction_time(self, agent_id):
+        mine = [t for t in self.txs if t.agent_id == agent_id]
+        return mine[-1].timestamp if mine else None
+
+    def clear(self, agent_id=None):
+        self.txs.clear()
+
+
+def test_backend_without_reservations_falls_back_to_record_on_commit():
+    ledger = _OldStyleLedger()
+    policy = Policy(limits=PolicyLimits(per_transaction=100, daily=60))
+    with pytest.warns(RuntimeWarning, match="reserve"):
+        gate = Gate(policy=policy, ledger=ledger)
+
+    tx = make_tx(amount=25.0)
+    assert gate.check(tx).decision == Decision.ALLOW
+    assert ledger.txs == []
+    gate.commit(tx)
+    assert [t.id for t in ledger.txs] == [tx.id]
+
+    failed = make_tx(amount=25.0)
+    assert gate.check(failed).decision == Decision.ALLOW
+    gate.release(failed)
+    assert len(ledger.txs) == 1
+
+    @gated(gate=gate, agent_id="test-agent")
+    def pay(amount: float, merchant: str, category: str):
+        return "ok"
+
+    assert pay(25.0, "staples.com", "office_supplies") == "ok"
+    assert len(ledger.txs) == 2
+    with pytest.raises(GatedTransactionDenied):
+        pay(25.0, "staples.com", "office_supplies")

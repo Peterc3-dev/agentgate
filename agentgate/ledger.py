@@ -15,7 +15,13 @@ from .models import Transaction, normalize_merchant
 
 
 class LedgerBackend(Protocol):
-    """Protocol for persistent ledger backends."""
+    """Protocol for persistent ledger backends.
+
+    reserve, confirm, release and is_pending are optional. A backend that
+    lacks reserve/confirm/release still works: Gate emits a RuntimeWarning
+    and falls back to recording the transaction at commit() time, without
+    holding spend while a payment is in flight.
+    """
 
     def record(self, agent_id: str, transaction: Transaction) -> None: ...
     def get_transactions(
@@ -26,6 +32,7 @@ class LedgerBackend(Protocol):
     def reserve(self, agent_id: str, transaction: Transaction) -> None: ...
     def confirm(self, agent_id: str, transaction_id: str) -> bool: ...
     def release(self, agent_id: str, transaction_id: str) -> bool: ...
+    def is_pending(self, agent_id: str, transaction_id: str) -> bool: ...
 
 
 class InMemoryLedger:

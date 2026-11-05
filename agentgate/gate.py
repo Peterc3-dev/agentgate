@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 import uuid
+import warnings
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
@@ -19,6 +20,14 @@ from .models import (
     Policy,
     Transaction,
 )
+
+
+_RESERVATION_METHODS = ("reserve", "confirm", "release")
+
+
+def _supports_reservations(ledger: object) -> bool:
+    """True if the ledger implements the pending-reservation methods."""
+    return all(callable(getattr(ledger, m, None)) for m in _RESERVATION_METHODS)
 
 
 def _new_audit_id() -> str:
@@ -69,6 +78,17 @@ class Gate:
     ):
         self.policy = policy
         self.ledger = ledger or InMemoryLedger()
+        self._reservations = _supports_reservations(self.ledger)
+        if not self._reservations:
+            warnings.warn(
+                f"{type(self.ledger).__name__} does not implement reserve/"
+                "confirm/release; check() will not reserve spend and commit() "
+                "will record the transaction. Concurrent check() calls can "
+                "then both pass a cumulative limit only one of them fits. "
+                "Implement the reservation methods to close that gap.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self.escalation_handler = escalation_handler
         self._checks = checks or ALL_CHECKS
         self._audit_log: list[AuditEntry] = audit_log if audit_log is not None else []
@@ -97,11 +117,13 @@ class Gate:
         reservation is recorded directly, stamped with now.
         """
         with self._lock:
-            if not self.ledger.confirm(tx.agent_id, tx.id):
+            if not self._reservations or not self.ledger.confirm(tx.agent_id, tx.id):
                 self.ledger.record(tx.agent_id, self._stamped(tx))
 
     def release(self, tx: Transaction) -> None:
         """Drop the reservation made by check() for a payment that failed."""
+        if not self._reservations:
+            return
         with self._lock:
             self.ledger.release(tx.agent_id, tx.id)
 
@@ -214,12 +236,14 @@ class Gate:
 
             # Record (or reserve) in ledger if allowed. An escalated
             # transaction awaiting a handler is held as a reservation.
+            # A backend without reservations records at commit() instead.
             if decision == Decision.ESCALATE and reserve_escalated:
-                self.ledger.reserve(tx.agent_id, self._stamped(tx))
+                if self._reservations:
+                    self.ledger.reserve(tx.agent_id, self._stamped(tx))
             elif decision == Decision.ALLOW:
                 if mode == "record":
                     self.ledger.record(tx.agent_id, self._stamped(tx))
-                elif mode == "reserve":
+                elif mode == "reserve" and self._reservations:
                     self.ledger.reserve(tx.agent_id, self._stamped(tx))
 
             result = EvaluationResult(
