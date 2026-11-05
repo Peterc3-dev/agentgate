@@ -105,6 +105,26 @@ class SlackEscalation(EscalationHandler):
 gate = Gate(policy=policy, escalation_handler=SlackEscalation())
 ```
 
+**Current limitation:** `Gate.evaluate()` does not call `escalation_handler` today.
+You can pass a handler to `Gate`, and it is stored on the gate, but nothing invokes it.
+When a transaction needs escalation, `evaluate()` returns `Decision.ESCALATE` with
+`escalation_reasons` filled in. Your code must check for that and call the handler itself.
+
+## Concurrency
+
+`Gate.evaluate()` holds a lock while it runs the checks and records an allowed
+transaction. This stops two concurrent calls for the same agent from both passing a
+cumulative limit, such as the daily cap.
+
+The lock belongs to each `Gate` instance. It does not cover other `Gate` objects. If two
+gates share one ledger, their evaluations are not serialised against each other. Use a
+single `Gate` per ledger if you need limits enforced across threads.
+
+## Amounts
+
+Transaction amounts must be finite and not negative. `NaN` or infinity raises
+`ValueError`, both from `Transaction(...)` and from the `@gated` decorator.
+
 ## Audit Log
 
 Every evaluation produces an `AuditEntry`:
