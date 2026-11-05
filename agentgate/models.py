@@ -100,6 +100,11 @@ class PolicyLimits:
             raise ValueError("limits.currency must be a non-empty string")
 
 
+def normalize_category(category: str) -> str:
+    """Canonical form used to compare categories: stripped and lower-cased."""
+    return str(category).strip().lower()
+
+
 @dataclass
 class MerchantRules:
     """Merchant/category allow/block rules."""
@@ -108,6 +113,14 @@ class MerchantRules:
     blocked_categories: list[str] = field(default_factory=list)
     allowed_merchants: list[str] | None = None  # None = all allowed
     blocked_merchants: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Category matching is case-insensitive, like merchant matching:
+        # store categories lower-cased and compare against the lower-cased
+        # transaction category.
+        if self.allowed_categories is not None:
+            self.allowed_categories = [normalize_category(c) for c in self.allowed_categories]
+        self.blocked_categories = [normalize_category(c) for c in self.blocked_categories]
 
 
 @dataclass

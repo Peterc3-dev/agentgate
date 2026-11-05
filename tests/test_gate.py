@@ -796,3 +796,29 @@ def test_load_policy_valid_allowed_hours_is_tuple():
 
     policy = load_policy({"time_restrictions": {"allowed_hours": [9, 17]}})
     assert policy.time_restrictions.allowed_hours == (9, 17)
+
+
+# --- Category case-insensitivity ---
+
+
+@pytest.mark.parametrize("policy_cat,tx_cat", [("Software", "software"), ("software", "Software")])
+def test_allowed_category_case_insensitive(policy_cat, tx_cat):
+    gate = Gate(policy=Policy(merchants=MerchantRules(allowed_categories=[policy_cat])))
+    assert gate.evaluate(make_tx(category=tx_cat)).decision == Decision.ALLOW
+
+
+@pytest.mark.parametrize("policy_cat,tx_cat", [("Software", "software"), ("software", "SOFTWARE")])
+def test_blocked_category_case_insensitive(policy_cat, tx_cat):
+    gate = Gate(policy=Policy(merchants=MerchantRules(blocked_categories=[policy_cat])))
+    result = gate.evaluate(make_tx(category=tx_cat))
+    assert result.decision == Decision.DENY
+    assert "category" in [c.name for c in result.failed_checks]
+
+
+def test_loaded_policy_categories_case_insensitive():
+    from agentgate import load_policy
+
+    policy = load_policy({"merchants": {"allowed_categories": ["Software"], "blocked_categories": ["Gambling"]}})
+    gate = Gate(policy=policy)
+    assert gate.evaluate(make_tx(category="software")).decision == Decision.ALLOW
+    assert gate.evaluate(make_tx(category="gambling")).decision == Decision.DENY

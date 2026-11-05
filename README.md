@@ -100,6 +100,9 @@ two integers in 0..24, and `allowed_days` integers in 0..6. Quoted numbers such 
 `daily: "200"` are not converted: they raise `ValueError` naming the field, so write
 numbers without quotes.
 
+Category and merchant rules ignore case: `Software` in `allowed_categories` matches a
+transaction with category `software`.
+
 ## Custom Escalation Handlers
 
 ```python

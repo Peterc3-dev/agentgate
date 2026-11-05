@@ -6,7 +6,7 @@ import fnmatch
 from datetime import datetime, timedelta, timezone
 
 from .ledger import InMemoryLedger
-from .models import Check, CheckResult, Policy, Transaction
+from .models import Check, CheckResult, Policy, Transaction, normalize_category
 
 
 def check_amount_limit(tx: Transaction, policy: Policy, **_) -> Check:
@@ -95,9 +95,15 @@ def check_monthly_limit(tx: Transaction, policy: Policy, ledger: InMemoryLedger,
 def check_category(tx: Transaction, policy: Policy, **_) -> Check:
     """Check if transaction category is allowed."""
     rules = policy.merchants
+    category = normalize_category(tx.category)
+    blocked = [normalize_category(c) for c in rules.blocked_categories]
+    allowed = (
+        None if rules.allowed_categories is None
+        else [normalize_category(c) for c in rules.allowed_categories]
+    )
 
     # Check blocked categories first
-    if tx.category in rules.blocked_categories:
+    if category in blocked:
         return Check(
             "category",
             CheckResult.FAIL,
@@ -106,7 +112,7 @@ def check_category(tx: Transaction, policy: Policy, **_) -> Check:
         )
 
     # If allowlist is set, category must be in it
-    if rules.allowed_categories is not None and tx.category not in rules.allowed_categories:
+    if allowed is not None and category not in allowed:
         return Check(
             "category",
             CheckResult.FAIL,
@@ -237,8 +243,8 @@ def check_escalation(tx: Transaction, policy: Policy, ledger: InMemoryLedger, **
             reasons.append(f"New merchant: {tx.merchant}")
 
     if rules.on_new_category:
-        known = ledger.get_known_categories(tx.agent_id)
-        if tx.category not in known and known:
+        known = {normalize_category(c) for c in ledger.get_known_categories(tx.agent_id)}
+        if normalize_category(tx.category) not in known and known:
             reasons.append(f"New category: {tx.category}")
 
     if rules.on_cumulative_above is not None:
