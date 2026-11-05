@@ -105,6 +105,11 @@ def normalize_category(category: str) -> str:
     return str(category).strip().lower()
 
 
+def normalize_merchant(merchant: str) -> str:
+    """Canonical form used to compare merchants: stripped and lower-cased."""
+    return str(merchant).strip().lower()
+
+
 @dataclass
 class MerchantRules:
     """Merchant/category allow/block rules."""

@@ -6,7 +6,7 @@ import fnmatch
 from datetime import datetime, timedelta, timezone
 
 from .ledger import InMemoryLedger
-from .models import Check, CheckResult, Policy, Transaction, normalize_category
+from .models import Check, CheckResult, Policy, Transaction, normalize_category, normalize_merchant
 
 
 def check_amount_limit(tx: Transaction, policy: Policy, **_) -> Check:
@@ -238,8 +238,8 @@ def check_escalation(tx: Transaction, policy: Policy, ledger: InMemoryLedger, **
         reasons.append(f"Amount {tx.amount} exceeds escalation threshold {rules.above_amount}")
 
     if rules.on_new_merchant:
-        known = ledger.get_known_merchants(tx.agent_id)
-        if tx.merchant not in known and known:  # don't escalate the very first tx
+        known = {normalize_merchant(m) for m in ledger.get_known_merchants(tx.agent_id)}
+        if normalize_merchant(tx.merchant) not in known and known:  # don't escalate the very first tx
             reasons.append(f"New merchant: {tx.merchant}")
 
     if rules.on_new_category:

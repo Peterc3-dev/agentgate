@@ -191,6 +191,18 @@ def test_escalate_new_merchant():
     assert r3.decision == Decision.ESCALATE
 
 
+def test_new_merchant_check_ignores_case():
+    policy = Policy(escalation=EscalationRules(on_new_merchant=True))
+    gate = Gate(policy=policy)
+
+    r1 = gate.evaluate(make_tx(merchant="Amazon"))
+    assert r1.decision == Decision.ALLOW
+
+    r2 = gate.evaluate(make_tx(merchant="amazon"))
+    assert r2.decision == Decision.ALLOW
+    assert not r2.escalation_reasons
+
+
 def test_deny_overrides_escalation():
     """If a hard check fails, decision is DENY even if escalation would trigger."""
     policy = Policy(

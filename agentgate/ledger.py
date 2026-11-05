@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from .models import Transaction
+from .models import Transaction, normalize_merchant
 
 
 class LedgerBackend(Protocol):
@@ -46,7 +46,7 @@ class InMemoryLedger:
 
     def record(self, agent_id: str, transaction: Transaction) -> None:
         self._transactions[agent_id].append(transaction)
-        self._known_merchants[agent_id].add(transaction.merchant)
+        self._known_merchants[agent_id].add(normalize_merchant(transaction.merchant))
         self._known_categories[agent_id].add(transaction.category)
 
     def reserve(self, agent_id: str, transaction: Transaction) -> None:
@@ -68,7 +68,7 @@ class InMemoryLedger:
         pending.discard(transaction_id)
         for tx in self._transactions[agent_id]:
             if tx.id == transaction_id:
-                self._known_merchants[agent_id].add(tx.merchant)
+                self._known_merchants[agent_id].add(normalize_merchant(tx.merchant))
                 self._known_categories[agent_id].add(tx.category)
                 break
         return True
