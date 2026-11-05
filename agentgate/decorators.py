@@ -65,7 +65,9 @@ def gated(
 
     The decorated function will raise GatedTransactionDenied if the
     transaction is denied, or GatedTransactionEscalated if it needs
-    human approval.
+    human approval. For an async function whose gate has an
+    ``escalation_handler``, the handler is awaited instead: approval lets
+    the payment run, rejection raises GatedTransactionDenied.
     """
     if policy is None and gate is None:
         raise ValueError("Either policy or gate must be provided")
@@ -144,7 +146,10 @@ def gated(
                 reasoning=reasoning,
             )
 
-            result = _gate.check(tx)
+            if _gate.escalation_handler is not None:
+                result = await _gate.check_async(tx)
+            else:
+                result = _gate.check(tx)
 
             if result.decision == Decision.DENY:
                 raise GatedTransactionDenied(result)

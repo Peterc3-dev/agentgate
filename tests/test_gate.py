@@ -670,3 +670,86 @@ def test_gated_async_decorator_currency_param_mismatch_denied():
     assert asyncio.run(buy("staples.com", 25.0)) == "ok"
     with pytest.raises(GatedTransactionDenied):
         asyncio.run(buy("staples.com", 25.0, "USD"))
+
+
+# --- Escalation handler ---
+
+
+class _FakeHandler:
+    def __init__(self, approve):
+        self.approve = approve
+        self.calls = []
+
+    async def escalate(self, transaction, reasons):
+        self.calls.append((transaction.id, list(reasons)))
+        return self.approve
+
+
+def _escalating_gate(handler):
+    policy = Policy(
+        limits=PolicyLimits(daily=200.0),
+        escalation=EscalationRules(above_amount=100.0),
+    )
+    return Gate(policy=policy, escalation_handler=handler)
+
+
+def test_evaluate_async_approved_escalation_records_and_counts_toward_daily():
+    import asyncio
+
+    handler = _FakeHandler(approve=True)
+    gate = _escalating_gate(handler)
+    result = asyncio.run(gate.evaluate_async(make_tx(amount=150.0)))
+    assert result.decision == Decision.ALLOW
+    assert result.audit.escalation_outcome == "approved"
+    assert len(handler.calls) == 1
+    assert gate.ledger.total_since("test-agent", _epoch()) == 150.0
+    # The approved spend counts toward the daily limit.
+    over = asyncio.run(gate.evaluate_async(make_tx(amount=60.0)))
+    assert over.decision == Decision.DENY
+    assert "daily_limit" in [c.name for c in over.failed_checks]
+
+
+def test_evaluate_async_rejected_escalation_records_nothing():
+    import asyncio
+
+    handler = _FakeHandler(approve=False)
+    gate = _escalating_gate(handler)
+    result = asyncio.run(gate.evaluate_async(make_tx(amount=150.0)))
+    assert result.decision == Decision.DENY
+    assert result.audit.decision == Decision.DENY
+    assert result.audit.escalation_outcome == "rejected"
+    assert result.audit.escalation_reasons
+    assert gate.ledger.total_since("test-agent", _epoch()) == 0
+    assert [a.decision for a in gate.audit_log] == [Decision.ESCALATE, Decision.DENY]
+
+
+def test_evaluate_sync_does_not_call_handler():
+    handler = _FakeHandler(approve=True)
+    gate = _escalating_gate(handler)
+    result = gate.evaluate(make_tx(amount=150.0))
+    assert result.decision == Decision.ESCALATE
+    assert handler.calls == []
+    assert gate.ledger.total_since("test-agent", _epoch()) == 0
+
+
+def test_gated_async_uses_handler_approve_and_reject():
+    import asyncio
+
+    approve_gate = _escalating_gate(_FakeHandler(approve=True))
+
+    @gated(gate=approve_gate, agent_id="test-agent")
+    async def pay(merchant, amount, category="office_supplies"):
+        return "paid"
+
+    assert asyncio.run(pay("staples.com", 150.0)) == "paid"
+    assert approve_gate.ledger.total_since("test-agent", _epoch()) == 150.0
+
+    reject_gate = _escalating_gate(_FakeHandler(approve=False))
+
+    @gated(gate=reject_gate, agent_id="test-agent")
+    async def pay2(merchant, amount, category="office_supplies"):
+        return "paid"
+
+    with pytest.raises(GatedTransactionDenied):
+        asyncio.run(pay2("staples.com", 150.0))
+    assert reject_gate.ledger.total_since("test-agent", _epoch()) == 0

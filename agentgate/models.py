@@ -181,4 +181,7 @@ class AuditEntry:
     reasoning: str
     policy_name: str
     policy_version: str
+    # For escalated transactions resolved by an escalation handler:
+    # "approved" or "rejected". None when no handler was consulted.
+    escalation_outcome: str | None = None
     id: str = field(default_factory=lambda: f"audit_{uuid.uuid4().hex[:12]}")

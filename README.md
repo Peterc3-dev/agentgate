@@ -105,10 +105,29 @@ class SlackEscalation(EscalationHandler):
 gate = Gate(policy=policy, escalation_handler=SlackEscalation())
 ```
 
-**Current limitation:** `Gate.evaluate()` does not call `escalation_handler` today.
-You can pass a handler to `Gate`, and it is stored on the gate, but nothing invokes it.
-When a transaction needs escalation, `evaluate()` returns `Decision.ESCALATE` with
-`escalation_reasons` filled in. Your code must check for that and call the handler itself.
+`Gate.evaluate()` is synchronous and never calls the handler: an escalated transaction
+comes back as `Decision.ESCALATE` with `escalation_reasons` filled in, and nothing is
+recorded.
+
+To route escalations through the handler, use `await gate.evaluate_async(tx)`. It runs
+the same checks. When the decision is `ESCALATE`, it reserves the spend in the ledger
+and awaits `handler.escalate(tx, reasons)`:
+
+- If the handler returns `True`, the transaction is recorded, counts toward limits and
+  velocity, and the result is `Decision.ALLOW`.
+- Otherwise the reservation is released, nothing is recorded, and the result is
+  `Decision.DENY`.
+- If the handler raises, the reservation is released and the exception propagates.
+
+Both outcomes add a second audit entry, after the `ESCALATE` one, with
+`escalation_outcome` set to `"approved"` or `"rejected"`. Without a handler,
+`evaluate_async()` behaves like `evaluate()`.
+
+`gate.check_async(tx)` does the same but keeps the reservation on approval, so you can
+call `commit(tx)` or `release(tx)` after the payment. An async function wrapped with
+`@gated` uses it when the gate has a handler: approval runs the payment, rejection
+raises `GatedTransactionDenied`. A sync `@gated` function does not call the handler and
+raises `GatedTransactionEscalated`.
 
 ## Concurrency
 

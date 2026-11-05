@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
@@ -18,6 +19,10 @@ from .models import (
     Policy,
     Transaction,
 )
+
+
+def _new_audit_id() -> str:
+    return f"audit_{uuid.uuid4().hex[:12]}"
 
 
 class EscalationHandler(Protocol):
@@ -106,7 +111,66 @@ class Gate:
         # could be backdated to fall outside every window.
         return dataclasses.replace(tx, timestamp=datetime.now(timezone.utc))
 
-    def _evaluate(self, tx: Transaction, mode: str) -> EvaluationResult:
+    async def evaluate_async(self, tx: Transaction) -> EvaluationResult:
+        """Evaluate a transaction, consulting the escalation handler if needed.
+
+        Runs the same checks as evaluate(). If the decision is ESCALATE and an
+        escalation_handler is set, the spend is reserved while the handler
+        decides, so concurrent transactions cannot use the same headroom. On
+        approval the transaction is recorded and the result is ALLOW; on
+        rejection the reservation is released and the result is DENY. Both
+        outcomes append an audit entry with escalation_outcome set.
+
+        Without a handler this behaves like evaluate() and an escalated
+        transaction is returned as ESCALATE without being recorded.
+        """
+        return await self._evaluate_async(tx, mode="record")
+
+    async def check_async(self, tx: Transaction) -> EvaluationResult:
+        """Like check(), but resolves ESCALATE through the escalation handler.
+
+        On approval the reservation is kept and the result is ALLOW; the
+        caller must then commit(tx) or release(tx) as with check().
+        """
+        return await self._evaluate_async(tx, mode="reserve")
+
+    async def _evaluate_async(self, tx: Transaction, mode: str) -> EvaluationResult:
+        handler = self.escalation_handler
+        if handler is None:
+            return self._evaluate(tx, mode=mode)
+
+        result = self._evaluate(tx, mode=mode, reserve_escalated=True)
+        if result.decision != Decision.ESCALATE:
+            return result
+
+        try:
+            approved = await handler.escalate(tx, list(result.escalation_reasons))
+        except BaseException:
+            self.release(tx)
+            raise
+
+        if approved is True:
+            if mode == "record":
+                self.commit(tx)
+            decision, outcome = Decision.ALLOW, "approved"
+        else:
+            self.release(tx)
+            decision, outcome = Decision.DENY, "rejected"
+
+        audit = dataclasses.replace(
+            result.audit,
+            id=_new_audit_id(),
+            timestamp=datetime.now(timezone.utc),
+            decision=decision,
+            escalation_outcome=outcome,
+        )
+        with self._lock:
+            self._audit_log.append(audit)
+        return dataclasses.replace(result, decision=decision, audit=audit)
+
+    def _evaluate(
+        self, tx: Transaction, mode: str, reserve_escalated: bool = False
+    ) -> EvaluationResult:
         with self._lock:
             results: list[Check] = []
             escalation_reasons: list[str] = []
@@ -148,8 +212,11 @@ class Gate:
             )
             self._audit_log.append(audit)
 
-            # Record (or reserve) in ledger if allowed
-            if decision == Decision.ALLOW:
+            # Record (or reserve) in ledger if allowed. An escalated
+            # transaction awaiting a handler is held as a reservation.
+            if decision == Decision.ESCALATE and reserve_escalated:
+                self.ledger.reserve(tx.agent_id, self._stamped(tx))
+            elif decision == Decision.ALLOW:
                 if mode == "record":
                     self.ledger.record(tx.agent_id, self._stamped(tx))
                 elif mode == "reserve":
