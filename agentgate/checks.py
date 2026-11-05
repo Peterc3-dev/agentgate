@@ -24,6 +24,19 @@ def check_amount_limit(tx: Transaction, policy: Policy, **_) -> Check:
     return Check("amount_limit", CheckResult.PASS, f"Amount {tx.amount} within limit {limit}")
 
 
+def check_currency(tx: Transaction, policy: Policy, **_) -> Check:
+    """Deny transactions in a currency other than the policy's limit currency."""
+    expected = policy.limits.currency
+    if tx.currency.upper() != expected.upper():
+        return Check(
+            "currency",
+            CheckResult.FAIL,
+            f"Currency {tx.currency} does not match policy currency {expected}",
+            {"currency": tx.currency, "expected": expected},
+        )
+    return Check("currency", CheckResult.PASS, f"Currency {tx.currency} matches policy")
+
+
 def check_daily_limit(tx: Transaction, policy: Policy, ledger: InMemoryLedger, **_) -> Check:
     """Check if transaction would exceed daily spending limit."""
     limit = policy.limits.daily
@@ -245,6 +258,7 @@ def check_escalation(tx: Transaction, policy: Policy, ledger: InMemoryLedger, **
 # Registry of all checks in evaluation order.
 # Escalation is last because it only matters if everything else passes.
 ALL_CHECKS = [
+    check_currency,
     check_amount_limit,
     check_daily_limit,
     check_weekly_limit,

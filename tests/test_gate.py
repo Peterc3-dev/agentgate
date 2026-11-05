@@ -410,3 +410,18 @@ def test_naive_timestamp_rejected():
 
     with pytest.raises(ValueError):
         make_tx(timestamp=datetime.now())
+
+
+# --- Currency ---
+
+
+def test_currency_mismatch_denied():
+    gate = Gate(policy=Policy(limits=PolicyLimits(per_transaction=50.0, currency="USD")))
+    result = gate.evaluate(make_tx(amount=40.0, currency="JPY"))
+    assert result.decision == Decision.DENY
+    assert "currency" in [c.name for c in result.failed_checks]
+
+
+def test_currency_match_case_insensitive():
+    gate = Gate(policy=Policy(limits=PolicyLimits(currency="usd")))
+    assert gate.evaluate(make_tx(currency="USD")).decision == Decision.ALLOW
