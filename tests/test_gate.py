@@ -625,3 +625,48 @@ def test_gate_check_reserves_and_release_or_commit_settles():
     gate.release(tx2)
     assert gate.ledger.total_since("test-agent", _epoch()) == 60.0
     assert gate.check(make_tx(amount=60.0)).decision == Decision.DENY
+
+
+# --- Decorator currency ---
+
+
+def test_gated_decorator_uses_policy_currency_by_default():
+    policy = Policy(limits=PolicyLimits(per_transaction=100.0, currency="GBP"))
+
+    @gated(policy=policy)
+    def buy(merchant, amount):
+        return "ok"
+
+    assert buy("staples.com", 25.0) == "ok"
+
+
+def test_gated_decorator_currency_param_mismatch_denied():
+    policy = Policy(limits=PolicyLimits(per_transaction=100.0, currency="GBP"))
+    calls = []
+
+    @gated(policy=policy, currency_param="currency")
+    def buy(merchant, amount, currency):
+        calls.append(currency)
+        return "ok"
+
+    assert buy("staples.com", 25.0, "GBP") == "ok"
+    assert buy("staples.com", 25.0, currency="gbp") == "ok"
+    with pytest.raises(GatedTransactionDenied):
+        buy("staples.com", 25.0, "USD")
+    with pytest.raises(GatedTransactionDenied):
+        buy("staples.com", 25.0, currency="EUR")
+    assert calls == ["GBP", "gbp"]
+
+
+def test_gated_async_decorator_currency_param_mismatch_denied():
+    import asyncio
+
+    policy = Policy(limits=PolicyLimits(per_transaction=100.0, currency="GBP"))
+
+    @gated(policy=policy, currency_param="currency")
+    async def buy(merchant, amount, currency="GBP"):
+        return "ok"
+
+    assert asyncio.run(buy("staples.com", 25.0)) == "ok"
+    with pytest.raises(GatedTransactionDenied):
+        asyncio.run(buy("staples.com", 25.0, "USD"))

@@ -44,6 +44,7 @@ def gated(
     category_param: str = "category",
     agent_id: str = "default-agent",
     reasoning_param: str | None = None,
+    currency_param: str | None = None,
 ):
     """Decorator that gates a payment function behind policy evaluation.
 
@@ -56,6 +57,11 @@ def gated(
         @gated(gate=my_gate, amount_param="price")
         def purchase(store, price):
             ...
+
+    The transaction currency defaults to the gate policy's
+    ``limits.currency``. Pass ``currency_param`` to read it from a
+    parameter of the wrapped function instead (keyword or positional);
+    if that argument is absent or None, the policy currency is used.
 
     The decorated function will raise GatedTransactionDenied if the
     transaction is denied, or GatedTransactionEscalated if it needs
@@ -80,10 +86,15 @@ def gated(
             reasoning = ""
             if reasoning_param:
                 reasoning = bound.arguments.get(reasoning_param, "")
+            currency = _gate.policy.limits.currency
+            if currency_param:
+                arg = bound.arguments.get(currency_param)
+                if arg is not None:
+                    currency = str(arg)
 
             tx = Transaction(
                 amount=_coerce_amount(amount),
-                currency="USD",
+                currency=currency,
                 merchant=str(merchant),
                 category=str(category),
                 agent_id=agent_id,
@@ -118,10 +129,15 @@ def gated(
             reasoning = ""
             if reasoning_param:
                 reasoning = bound.arguments.get(reasoning_param, "")
+            currency = _gate.policy.limits.currency
+            if currency_param:
+                arg = bound.arguments.get(currency_param)
+                if arg is not None:
+                    currency = str(arg)
 
             tx = Transaction(
                 amount=_coerce_amount(amount),
-                currency="USD",
+                currency=currency,
                 merchant=str(merchant),
                 category=str(category),
                 agent_id=agent_id,
